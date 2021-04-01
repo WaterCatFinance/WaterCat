@@ -447,6 +447,8 @@ library Address {
  */
 contract Ownable is Context {
     address private _owner;
+    address private _previousOwner;
+    uint256 private _lockTime;
 
     event OwnershipTransferred(address indexed previousOwner, address indexed newOwner);
 
@@ -494,6 +496,26 @@ contract Ownable is Context {
         require(newOwner != address(0), "Ownable: new owner is the zero address");
         emit OwnershipTransferred(_owner, newOwner);
         _owner = newOwner;
+    }
+
+    function getUnlockTime() public view returns (uint256) {
+        return _lockTime;
+    }
+
+    //Locks the contract for owner for the amount of time provided
+    function lockOwner(uint256 time) public virtual onlyOwner {
+        _previousOwner = _owner;
+        _owner = address(0);
+        _lockTime = now + time;
+        emit OwnershipTransferred(_owner, address(0));
+    }
+    
+    //Unlocks the contract for owner after _lockTime passed
+    function unlockOwner() public virtual {
+        require(_previousOwner == msg.sender, "You don't have permission to unlock");
+        require(now > _lockTime , "Contract is still locked");
+        emit OwnershipTransferred(_owner, _previousOwner);
+        _owner = _previousOwner;
     }
 }
 
@@ -748,6 +770,8 @@ contract WaterCatFinance is Context, IERC20, Ownable {
     
     //limit tokens 
     uint256 public _maxTxAmount = 5000 * 10**18;
+    uint256 private _previousMaxTxAmount = _maxTxAmount;
+
     uint256 private numTokensSellToAddToLiquidity = 500 * 10**18;
     
     event MinTokensBeforeSwapUpdated(uint256 minTokensBeforeSwap);
@@ -1113,21 +1137,78 @@ contract WaterCatFinance is Context, IERC20, Ownable {
         );
     }
 
-    function removeAllFee() private {
+    function excludeFromReward(address account) public onlyOwner() {
+        require(!_isExcluded[account], "Account is already excluded from reward");
+        if(_rOwned[account] > 0) {
+            _tOwned[account] = tokenFromReflection(_rOwned[account]);
+        }
+        _isExcluded[account] = true;
+        _excluded.push(account);
+    }
+
+    function includeInReward(address account) public onlyOwner() {
+        require(_isExcluded[account], "Account is already included in reward");
+        for (uint256 i = 0; i < _excluded.length; i++) {
+            if (_excluded[i] == account) {
+                _excluded[i] = _excluded[_excluded.length - 1];
+                _tOwned[account] = 0;
+                _isExcluded[account] = false;
+                _excluded.pop();
+                break;
+            }
+        }
+    }
+
+    function excludeFromFee(address account) public onlyOwner {
+        _isExcludedFromFee[account] = true;
+    }
+    
+    function includeInFee(address account) public onlyOwner {
+        _isExcludedFromFee[account] = false;
+    }
+
+    function isExcludedFromFee(address account) public view returns(bool) {
+        return _isExcludedFromFee[account];
+    }
+
+    function isExcludedFromReward(address account) public view returns (bool) {
+        return _isExcluded[account];
+    }
+
+    function restoreMaxTxAmount() public onlyOwner {
+        _maxTxAmount = _previousMaxTxAmount;
+    }
+
+    function removeMaxTxAmount() public onlyOwner {
+        if(_maxTxAmount == _tTotal) return;
+
+        _previousMaxTxAmount = _maxTxAmount;
+
+        _maxTxAmount = _tTotal;
+
+    }
+
+    function removeAllFee() public onlyOwner {
         if(_taxFee == 0 && _liquidityFee == 0 && _burningFee == 0) return;
         
         _previousTaxFee = _taxFee;
         _previousLiquidityFee = _liquidityFee;
-		_previousBurningFee = _burningFee;
+        _previousBurningFee = _burningFee;
         
         _taxFee = 0;
         _liquidityFee = 0;
-		_burningFee = 0;
+        _burningFee = 0;
     }
     
-    function restoreAllFee() private {
+    function restoreAllFee() public onlyOwner {
         _taxFee = _previousTaxFee;
         _liquidityFee = _previousLiquidityFee;
-		_burningFee = _previousBurningFee;
+        _burningFee = _previousBurningFee;
     }
+
+    function setSwapAndLiquifyEnabled(bool _enabled) public onlyOwner {
+        swapAndLiquifyEnabled = _enabled;
+        emit SwapAndLiquifyEnabledUpdated(_enabled);
+    }
+
 }
